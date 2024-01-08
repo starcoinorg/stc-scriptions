@@ -1,6 +1,4 @@
 module STCScriptionAdmin::STCScriptions {
-    use StarcoinFramework::NFT::Metadata;
-    use StarcoinFramework::Vector;
     use StarcoinFramework::Errors;
     use StarcoinFramework::Option;
     use StarcoinFramework::STC::STC;
@@ -15,6 +13,7 @@ module STCScriptionAdmin::STCScriptions {
     const ERR_NO_PRIVILEGE: u64 = 1001;
     const ERR_INIT_REPEATE: u64 = 1002;
     const ERR_NOT_INITIALIZE: u64 = 1003;
+    const ERR_INSCRIPTION_ID_NOT_EXISTS: u64 = 1004;
 
     struct TickConfig has key, store {
         current_version: u64,
@@ -38,18 +37,18 @@ module STCScriptionAdmin::STCScriptions {
         next_inscription_id: u64,
     }
 
-    struct STCScriptContainer has key, store {
-        inscriptions: vector<Inscription<STC>>
+    struct InscriptionContainer has key, store {
+        inscriptions: Table::Table<u64, Inscription<STC>>
     }
 
-    struct Inscription<phantom T: store> {
+    struct Inscription<phantom T: store> has store {
         inscription_id: u64,
         tick_id: u64,
         token: Token::Token<T>,
         meta_data: Option::Option<TickMetaData>,
     }
 
-    struct TickMetaData {
+    struct TickMetaData has store, drop {
         /// The metadata content type, eg: image/png, image/jpeg, it is optional
         content_type: String::String,
         /// The metadata content
@@ -85,9 +84,9 @@ module STCScriptionAdmin::STCScriptions {
             deployed_ticks: Table::new(),
         });
 
-        assert!(!exists<STCScriptContainer>(Signer::address_of(sender)), Errors::not_published(ERR_INIT_REPEATE));
-        move_to(sender, STCScriptContainer {
-            inscriptions: Vector::empty<Inscription<STC>>()
+        assert!(!exists<InscriptionContainer>(Signer::address_of(sender)), Errors::already_published(ERR_INIT_REPEATE));
+        move_to(sender, InscriptionContainer {
+            inscriptions: Table::new()
         });
     }
 
@@ -127,7 +126,7 @@ module STCScriptionAdmin::STCScriptions {
         lock_amount: u128,
         content_type: Option::Option<String::String>,
         content: Option::Option<vector<u8>>,
-    ) acquires STCScriptContainer, TickConfig {
+    ) acquires InscriptionContainer, TickConfig {
         let amount = STCScriptionsCalc::cal_mint_amount(lock_amount);
         assert!(exists<TickConfig>(@STCScriptionAdmin), Errors::not_published(ERR_NOT_INITIALIZE));
         let tick_config = borrow_global_mut<TickConfig>(@STCScriptionAdmin);
@@ -142,20 +141,42 @@ module STCScriptionAdmin::STCScriptions {
             Option::none<TickMetaData>()
         };
 
-        let container = borrow_global_mut<STCScriptContainer>(tick_address);
+        let container = borrow_global_mut<InscriptionContainer>(tick_address);
         let inscription_id = tick_config.next_inscription_id;
-        Vector::push_back(&mut container.inscriptions, Inscription<STC> {
+        Table::add(&mut container.inscriptions, inscription_id, Inscription<STC> {
             inscription_id,
             tick_id,
             token: be_stake_token,
             meta_data,
         });
         tick_config.next_inscription_id = inscription_id + 1;
+
+        // TODO: Emit a mint event
     }
 
-    public fun burn(sender: &signer, scription_id: u64) {}
+    /// Burn from Inscription Container
+    public fun burn(sender: &signer, inscription_id: u64) acquires InscriptionContainer {
+        let sender_addr = Signer::address_of(sender);
+        let (_tick_id, _inscription_id, token, _meta_data,) = takeout_inscription(
+            sender_addr,
+            inscription_id
+        );
 
-    public fun transfer(sender: &signer, acceptor: address, inscription_id: u64) {}
+        Account::deposit(sender_addr, token);
+
+
+        // TODO: Emit a burn event
+    }
+
+
+    public fun transfer(sender: &signer, acceptor: address, inscription_id: u64) acquires InscriptionContainer {
+        let sender_addr = Signer::address_of(sender);
+        let (_tick_id, _inscription_id , token, _meta_data) = takeout_inscription(sender_addr, inscription_id);
+
+        Account::deposit(acceptor, token);
+
+        // TODO: emit a transfer event
+    }
 
     ////////////////////////////////////////////////////
     /// Internal functions
@@ -179,8 +200,27 @@ module STCScriptionAdmin::STCScriptions {
         }
     }
 
+    fun takeout_inscription(
+        account: address,
+        inscription_id: u64
+    ): (u64, u64, Token::Token<STC>, Option::Option<TickMetaData>) acquires InscriptionContainer {
+        assert!(exists<InscriptionContainer>(account), Errors::not_published(ERR_NOT_INITIALIZE));
+
+        let container = borrow_global_mut<InscriptionContainer>(account);
+        assert!(
+            Table::contains(&container.inscriptions, inscription_id),
+            Errors::not_published(ERR_INSCRIPTION_ID_NOT_EXISTS)
+        );
+        let Inscription<STC> {
+            tick_id,
+            inscription_id,
+            token,
+            meta_data,
+        } = Table::remove(&mut container.inscriptions, inscription_id);
+        (tick_id, inscription_id, token, meta_data)
+    }
+
     fun has_privilege(sender: &signer): bool {
         Signer::address_of(sender) == @STCScriptionAdmin
     }
-
 }
