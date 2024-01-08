@@ -183,8 +183,4 @@ module STCScriptionAdmin::STCScriptions {
         Signer::address_of(sender) == @STCScriptionAdmin
     }
 
-    // fun gen_next_deploy_id(account_addr: address, advance: bool) : u64 {
-    //     assert!(!exists<TickDeploy>(account_addr), Errors::not_published(ERR_NOT_INITIALIZE));
-    //     let  borrow_global_mut<TickDeploy>()
-    // }
 }
