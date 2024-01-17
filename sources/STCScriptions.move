@@ -11,6 +11,7 @@ module STCScriptionAdmin::STCScriptions {
     use StarcoinFramework::Table;
     use StarcoinFramework::Timestamp;
     use StarcoinFramework::Token;
+    use StarcoinFramework::Vector;
 
     const ERR_NO_PRIVILEGE: u64 = 1001;
     const ERR_INIT_REPEATE: u64 = 1002;
@@ -246,7 +247,6 @@ module STCScriptionAdmin::STCScriptions {
         Account::deposit(sender_addr, token);
     }
 
-
     public fun transfer(sender: &signer, acceptor: address, inscription_id: u64) acquires InscriptionContainer {
         let sender_addr = Signer::address_of(sender);
         let inscription = takeout_inscription(
@@ -268,6 +268,49 @@ module STCScriptionAdmin::STCScriptions {
             tick_address,
             to_account: acceptor,
         });
+    }
+
+    public fun view_deployed_tick(
+        deployed_address: address,
+        tick_id: u64
+    ): (vector<u8>, u128, u128) acquires TickDeploy {
+        let tick_deploy = borrow_global<TickDeploy>(deployed_address);
+        let tick_info = Table::borrow(&tick_deploy.deployed_ticks, tick_id);
+        (*String::bytes(&tick_info.tick_name), tick_info.total_supply, tick_info.total_mint)
+    }
+
+    public fun view_inscription(
+        user_addr: address,
+        inscription_id: u64,
+    ): (u64, vector<u8>, u128, u128, vector<u8>, vector<u8>) acquires InscriptionContainer, TickDeploy {
+        // Return value: tick id, tick name, tick amount, lock token amount, meta type, meta content
+        let cointainer = borrow_global_mut<InscriptionContainer>(user_addr);
+        let inscription = Table::borrow_mut(&mut cointainer.inscriptions, inscription_id);
+
+        let tick_deploy = borrow_global<TickDeploy>(inscription.tick_address);
+        let tick_info = Table::borrow(&tick_deploy.deployed_ticks, inscription.tick_id);
+
+        let (meta_data_type, meta_content) = if (Option::is_some(&inscription.meta_data)) {
+            let tick_meta_data = Option::borrow(&inscription.meta_data);
+            (
+                *String::bytes(&tick_meta_data.content_type),
+                *&tick_meta_data.content
+            )
+        } else {
+            (
+                Vector::empty<u8>(),
+                Vector::empty<u8>()
+            )
+        };
+
+        (
+            inscription.tick_id,
+            *String::bytes(&tick_info.tick_name),
+            inscription.tick_amount,
+            Token::value(&inscription.token),
+            meta_data_type,
+            meta_content,
+        )
     }
 
     ////////////////////////////////////////////////////
