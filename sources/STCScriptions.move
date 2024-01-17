@@ -98,11 +98,11 @@ module STCScriptionAdmin::STCScriptions {
 
     public fun init_genesis(sender: &signer, current_version: u64) {
         assert!(has_privilege(sender), Errors::invalid_argument(ERR_NO_PRIVILEGE));
-        assert!(exists<TickConfig>(@STCScriptionAdmin), Errors::invalid_argument(ERR_INIT_REPEATE));
+        assert!(!exists<TickConfig>(@STCScriptionAdmin), Errors::invalid_argument(ERR_INIT_REPEATE));
         move_to(sender, TickConfig {
             current_version,
-            next_inscription_id: 0,
-            next_tick_id: 0,
+            next_inscription_id: 1,
+            next_tick_id: 1,
         });
 
         EventUtil::init_event<TickMintEvent>(sender);
@@ -116,14 +116,14 @@ module STCScriptionAdmin::STCScriptions {
         assert!(exists<TickConfig>(@STCScriptionAdmin), Errors::not_published(ERR_NOT_INITIALIZE));
         let sender_addr = Signer::address_of(sender);
 
+        assert!(!exists<TickDeploy>(sender_addr), Errors::already_published(ERR_INIT_REPEATE));
         let config = borrow_global<TickConfig>(@STCScriptionAdmin);
-        assert!(!exists<TickConfig>(sender_addr), Errors::not_published(ERR_INIT_REPEATE));
         move_to(sender, TickDeploy {
             version: config.current_version,
             deployed_ticks: Table::new(),
         });
 
-        assert!(!exists<InscriptionContainer>(Signer::address_of(sender)), Errors::already_published(ERR_INIT_REPEATE));
+        assert!(!exists<InscriptionContainer>(sender_addr), Errors::already_published(ERR_INIT_REPEATE));
         move_to(sender, InscriptionContainer {
             inscriptions: Table::new()
         });
@@ -166,6 +166,9 @@ module STCScriptionAdmin::STCScriptions {
         content_type: Option::Option<String::String>,
         content: Option::Option<vector<u8>>,
     ) acquires InscriptionContainer, TickConfig, TickDeploy {
+        let sender_addr = Signer::address_of(sender);
+        assert!(has_accepted(sender_addr), Errors::invalid_state(ERR_NOT_ACCEPTED));
+
         let mint_amount = STCScriptionsCalc::cal_mint_amount(locked_amount);
         assert!(exists<TickConfig>(@STCScriptionAdmin), Errors::not_published(ERR_NOT_INITIALIZE));
         let tick_config = borrow_global_mut<TickConfig>(@STCScriptionAdmin);
@@ -180,9 +183,10 @@ module STCScriptionAdmin::STCScriptions {
             Option::none<TickMetaData>()
         };
 
-        let sender_addr = Signer::address_of(sender);
         let container = borrow_global_mut<InscriptionContainer>(sender_addr);
         let inscription_id = tick_config.next_inscription_id;
+
+
         Table::add(&mut container.inscriptions, inscription_id, Inscription<STC> {
             inscription_id,
             tick_id,
@@ -192,6 +196,7 @@ module STCScriptionAdmin::STCScriptions {
             meta_data,
         });
         tick_config.next_inscription_id = inscription_id + 1;
+
 
         let tick_deploy = borrow_global_mut<TickDeploy>(tick_address);
         assert!(
@@ -203,7 +208,7 @@ module STCScriptionAdmin::STCScriptions {
         let now = Timestamp::now_seconds();
         let tick_info = Table::borrow_mut(&mut tick_deploy.deployed_ticks, tick_id);
         assert!(
-            tick_info.start_time >= now && tick_info.start_time + tick_info.duration < now,
+            tick_info.start_time <= now && now < (tick_info.start_time + tick_info.duration),
             Errors::invalid_state(ERR_NOT_READY)
         );
 
@@ -277,6 +282,11 @@ module STCScriptionAdmin::STCScriptions {
         let tick_deploy = borrow_global<TickDeploy>(deployed_address);
         let tick_info = Table::borrow(&tick_deploy.deployed_ticks, tick_id);
         (*String::bytes(&tick_info.tick_name), tick_info.total_supply, tick_info.total_mint)
+    }
+
+    public fun get_inscription_minted_count(user: address): u64 acquires InscriptionContainer {
+        let container = borrow_global<InscriptionContainer>(user);
+        Table::length(&container.inscriptions)
     }
 
     public fun view_inscription(
